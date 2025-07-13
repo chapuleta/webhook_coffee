@@ -90,94 +90,48 @@ app.get('/', (req, res) => {
 
 // Endpoint para receber webhooks do Mercado Pago
 app.post('/webhook', (req, res) => {
-  // RESPOSTA IMEDIATA - não usar async/await aqui
+  // Resposta IMEDIATA como no Python
   res.status(200).send('OK');
   
-  // Log do webhook recebido
-  console.log('🔔 WEBHOOK RECEBIDO:', {
-    timestamp: new Date().toISOString(),
-    method: req.method,
-    headers: {
-      'content-type': req.headers['content-type'],
-      'user-agent': req.headers['user-agent'],
-      'x-signature': req.headers['x-signature']
-    },
-    body: req.body
-  });
+  // Log básico
+  console.log('🔔 Webhook recebido:', new Date().toISOString());
+  console.log('Body:', JSON.stringify(req.body, null, 2));
   
-  // Processar webhook de forma completamente assíncrona
-  process.nextTick(async () => {
+  // Processar depois da resposta
+  setTimeout(async () => {
     try {
-      // Suporte para diferentes formatos de webhook do Mercado Pago
+      const body = req.body;
+      
+      // Extrair payment ID - suporte múltiplos formatos
       let paymentId = null;
-      let action = null;
       
-      // Formato novo (v1): { action, api_version, data: { id }, date_created, id, live_mode, type, user_id }
-      if (req.body.action && req.body.data && req.body.data.id) {
-        action = req.body.action;
-        paymentId = req.body.data.id;
-        console.log('📋 Formato novo de webhook detectado (API v1)');
-      }
-      // Formato antigo: { action, data }
-      else if (req.body.action && req.body.data) {
-        action = req.body.action;
-        paymentId = req.body.data;
-        console.log('📋 Formato antigo de webhook detectado');
-      }
-      // Formato direto: { id, type }
-      else if (req.body.id && req.body.type === 'payment') {
-        action = 'payment.updated';
-        paymentId = req.body.id;
-        console.log('📋 Formato direto de webhook detectado');
+      if (body.data && body.data.id) {
+        paymentId = body.data.id;
+      } else if (body.id) {
+        paymentId = body.id;
       }
       
-      // Verificar se é uma notificação de pagamento válida
-      if ((action === 'payment.created' || action === 'payment.updated') && paymentId) {
-        console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
+      if (paymentId && (body.action === 'payment.updated' || body.action === 'payment.created')) {
+        console.log(`💰 Processando pagamento: ${paymentId}`);
         
-        try {
-          // Buscar detalhes do pagamento na API do Mercado Pago
-          const paymentDetails = await getPaymentDetails(paymentId);
+        // Buscar detalhes do pagamento
+        const paymentDetails = await getPaymentDetails(paymentId);
+        
+        if (paymentDetails && paymentDetails.status === 'approved') {
+          console.log('✅ Pagamento aprovado:', {
+            id: paymentId,
+            amount: paymentDetails.transaction_amount,
+            status: paymentDetails.status
+          });
           
-          if (paymentDetails) {
-            console.log('📊 Detalhes do pagamento:', {
-              id: paymentId,
-              status: paymentDetails.status,
-              amount: paymentDetails.transaction_amount,
-              payment_method: paymentDetails.payment_method_id,
-              payer_email: paymentDetails.payer?.email,
-              payer_name: paymentDetails.payer?.first_name,
-              live_mode: req.body.live_mode
-            });
-            
-            if (paymentDetails.status === 'approved') {
-              // Atualizar dados da cafeteira
-              updateCoffeeData(paymentDetails);
-              
-              console.log('✅ PAGAMENTO APROVADO E PROCESSADO:', {
-                id: paymentId,
-                amount: paymentDetails.transaction_amount,
-                payer: paymentDetails.payer?.first_name || 'Anônimo',
-                new_total: coffeeData.totalAmount
-              });
-            } else {
-              console.log(`⏳ Pagamento ainda não aprovado. Status: ${paymentDetails.status}`);
-            }
-          } else {
-            console.log('❌ Não foi possível buscar detalhes do pagamento');
-          }
-        } catch (paymentError) {
-          console.error('💥 ERRO AO BUSCAR DETALHES DO PAGAMENTO:', paymentError.message);
+          // Atualizar dados da cafeteira
+          updateCoffeeData(paymentDetails);
         }
-      } else {
-        console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}`);
-        console.log('📄 Body completo:', JSON.stringify(req.body, null, 2));
       }
-      
     } catch (error) {
-      console.error('💥 ERRO NO PROCESSAMENTO DO WEBHOOK:', error.message);
+      console.error('Erro no webhook:', error.message);
     }
-  });
+  }, 100); // 100ms delay para garantir que a resposta foi enviada
 });
 
 // Endpoint para o ESP32 consultar dados da cafeteira
@@ -631,11 +585,9 @@ app.post('/simulate-webhook', async (req, res) => {
   }
 });
 
-// Função para buscar detalhes do pagamento na API do Mercado Pago
+// Função para buscar detalhes do pagamento (similar ao Python)
 async function getPaymentDetails(paymentId) {
   try {
-    console.log(`🔍 Buscando detalhes do pagamento ${paymentId}...`);
-    
     const response = await axios.get(
       `https://api.mercadopago.com/v1/payments/${paymentId}`,
       {
@@ -643,47 +595,47 @@ async function getPaymentDetails(paymentId) {
           'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        timeout: 5000 // 5 segundos de timeout
+        timeout: 10000
       }
     );
     
-    console.log(`✅ Detalhes do pagamento ${paymentId} obtidos com sucesso`);
     return response.data;
   } catch (error) {
-    if (error.code === 'ECONNABORTED') {
-      console.error(`⏰ Timeout ao buscar pagamento ${paymentId}`);
-    } else if (error.response) {
-      console.error(`❌ Erro HTTP ao buscar pagamento ${paymentId}:`, {
-        status: error.response.status,
-        statusText: error.response.statusText,
-        data: error.response.data
-      });
-    } else {
-      console.error(`💥 Erro de rede ao buscar pagamento ${paymentId}:`, error.message);
-    }
+    console.error(`Erro ao buscar pagamento ${paymentId}:`, error.message);
     return null;
   }
 }
 
-// Função para atualizar dados da cafeteira
+// Função para atualizar dados da cafeteira (similar ao Python)
 function updateCoffeeData(paymentDetails) {
   const amount = parseFloat(paymentDetails.transaction_amount);
-  const donorName = paymentDetails.payer?.first_name || 'Anônimo';
   
-  // Atualizar saldo total
+  // Extrair nome do pagador (similar ao Python)
+  let donorName = 'Anônimo';
+  const payer = paymentDetails.payer || {};
+  
+  if (payer.first_name && payer.last_name) {
+    donorName = `${payer.first_name} ${payer.last_name}`;
+  } else if (payer.first_name) {
+    donorName = payer.first_name;
+  } else if (payer.email) {
+    donorName = payer.email.split('@')[0];
+  }
+  
+  // Atualizar dados
   coffeeData.totalAmount += amount;
-  
-  // Atualizar última doação
   coffeeData.lastDonation = {
     amount: amount,
     date: new Date().toISOString(),
     donorName: donorName
   };
-  
-  // Incrementar contador
   coffeeData.transactionCount++;
   
-  console.log('Dados atualizados:', coffeeData);
+  console.log('Dados atualizados:', {
+    amount: amount,
+    donor: donorName,
+    total: coffeeData.totalAmount
+  });
 }
 
 // Middleware para capturar rotas não encontradas

@@ -90,21 +90,21 @@ app.get('/', (req, res) => {
 
 // Endpoint para receber webhooks do Mercado Pago
 app.post('/webhook', (req, res) => {
-  // Resposta IMEDIATA como no Python
-  res.status(200).send('OK');
+  // RESPOSTA MAIS RÁPIDA POSSÍVEL
+  res.writeHead(200, {'Content-Type': 'text/plain'});
+  res.end('OK');
   
-  // Log básico
-  console.log('🔔 Webhook recebido:', new Date().toISOString());
-  console.log('Body:', JSON.stringify(req.body, null, 2));
+  // Log mínimo necessário
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] Webhook recebido`);
   
-  // Processar depois da resposta
-  setTimeout(async () => {
+  // Processar de forma totalmente isolada
+  setImmediate(() => {
     try {
-      const body = req.body;
+      const body = req.body || {};
       
-      // Extrair payment ID - suporte múltiplos formatos
+      // Extrair payment ID
       let paymentId = null;
-      
       if (body.data && body.data.id) {
         paymentId = body.data.id;
       } else if (body.id) {
@@ -112,27 +112,34 @@ app.post('/webhook', (req, res) => {
       }
       
       if (paymentId && (body.action === 'payment.updated' || body.action === 'payment.created')) {
-        console.log(`💰 Processando pagamento: ${paymentId}`);
+        console.log(`[${timestamp}] Processando: ${paymentId}`);
         
-        // Buscar detalhes do pagamento
-        const paymentDetails = await getPaymentDetails(paymentId);
-        
-        if (paymentDetails && paymentDetails.status === 'approved') {
-          console.log('✅ Pagamento aprovado:', {
-            id: paymentId,
-            amount: paymentDetails.transaction_amount,
-            status: paymentDetails.status
-          });
-          
-          // Atualizar dados da cafeteira
-          updateCoffeeData(paymentDetails);
-        }
+        // Processar pagamento de forma assíncrona
+        processPayment(paymentId, timestamp);
+      } else {
+        console.log(`[${timestamp}] Webhook ignorado:`, JSON.stringify(body));
       }
     } catch (error) {
-      console.error('Erro no webhook:', error.message);
+      console.error(`[${timestamp}] Erro:`, error.message);
     }
-  }, 100); // 100ms delay para garantir que a resposta foi enviada
+  });
 });
+
+// Função separada para processar pagamento
+async function processPayment(paymentId, timestamp) {
+  try {
+    const paymentDetails = await getPaymentDetails(paymentId);
+    
+    if (paymentDetails && paymentDetails.status === 'approved') {
+      console.log(`[${timestamp}] ✅ Aprovado: ${paymentId} - R$ ${paymentDetails.transaction_amount}`);
+      updateCoffeeData(paymentDetails);
+    } else {
+      console.log(`[${timestamp}] ⏳ Pendente: ${paymentId} - ${paymentDetails?.status || 'unknown'}`);
+    }
+  } catch (error) {
+    console.error(`[${timestamp}] Erro ao processar ${paymentId}:`, error.message);
+  }
+}
 
 // Endpoint para o ESP32 consultar dados da cafeteira
 app.get('/coffee-status', (req, res) => {
@@ -637,6 +644,11 @@ function updateCoffeeData(paymentDetails) {
     total: coffeeData.totalAmount
   });
 }
+
+// Endpoint de warmup para evitar cold start
+app.get('/warmup', (req, res) => {
+  res.status(200).send('warmed');
+});
 
 // Middleware para capturar rotas não encontradas
 app.use('*', (req, res) => {

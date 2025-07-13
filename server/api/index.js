@@ -89,64 +89,55 @@ app.get('/', (req, res) => {
 });
 
 // Endpoint para receber webhooks do Mercado Pago
-app.post('/webhook', async (req, res) => {
-  const startTime = Date.now();
+app.post('/webhook', (req, res) => {
+  // RESPOSTA IMEDIATA - não usar async/await aqui
+  res.status(200).send('OK');
   
-  try {
-    // Sempre responder rapidamente primeiro para evitar timeout
-    res.status(200).json({ 
-      success: true,
-      message: 'Webhook recebido',
-      timestamp: new Date().toISOString()
-    });
-
-    console.log('🔔 WEBHOOK RECEBIDO:', {
-      headers: {
-        'content-type': req.headers['content-type'],
-        'user-agent': req.headers['user-agent'],
-        'x-signature': req.headers['x-signature']
-      },
-      body: req.body,
-      timestamp: new Date().toISOString()
-    });
-    
-    // Suporte para diferentes formatos de webhook do Mercado Pago
-    let paymentId = null;
-    let action = null;
-    
-    // Formato novo (v1): { action, api_version, data: { id }, date_created, id, live_mode, type, user_id }
-    if (req.body.action && req.body.data && req.body.data.id) {
-      action = req.body.action;
-      paymentId = req.body.data.id;
-      console.log('📋 Formato novo de webhook detectado (API v1)');
-    }
-    // Formato antigo: { action, data }
-    else if (req.body.action && req.body.data) {
-      action = req.body.action;
-      paymentId = req.body.data;
-      console.log('📋 Formato antigo de webhook detectado');
-    }
-    // Formato direto: { id, type }
-    else if (req.body.id && req.body.type === 'payment') {
-      action = 'payment.updated';
-      paymentId = req.body.id;
-      console.log('📋 Formato direto de webhook detectado');
-    }
-    
-    // Verificar se é uma notificação de pagamento válida
-    if ((action === 'payment.created' || action === 'payment.updated') && paymentId) {
-      console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
+  // Log do webhook recebido
+  console.log('🔔 WEBHOOK RECEBIDO:', {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    headers: {
+      'content-type': req.headers['content-type'],
+      'user-agent': req.headers['user-agent'],
+      'x-signature': req.headers['x-signature']
+    },
+    body: req.body
+  });
+  
+  // Processar webhook de forma completamente assíncrona
+  process.nextTick(async () => {
+    try {
+      // Suporte para diferentes formatos de webhook do Mercado Pago
+      let paymentId = null;
+      let action = null;
       
-      // Processar de forma assíncrona para não bloquear a resposta
-      setImmediate(async () => {
+      // Formato novo (v1): { action, api_version, data: { id }, date_created, id, live_mode, type, user_id }
+      if (req.body.action && req.body.data && req.body.data.id) {
+        action = req.body.action;
+        paymentId = req.body.data.id;
+        console.log('📋 Formato novo de webhook detectado (API v1)');
+      }
+      // Formato antigo: { action, data }
+      else if (req.body.action && req.body.data) {
+        action = req.body.action;
+        paymentId = req.body.data;
+        console.log('📋 Formato antigo de webhook detectado');
+      }
+      // Formato direto: { id, type }
+      else if (req.body.id && req.body.type === 'payment') {
+        action = 'payment.updated';
+        paymentId = req.body.id;
+        console.log('📋 Formato direto de webhook detectado');
+      }
+      
+      // Verificar se é uma notificação de pagamento válida
+      if ((action === 'payment.created' || action === 'payment.updated') && paymentId) {
+        console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
+        
         try {
-          // Buscar detalhes do pagamento na API do Mercado Pago com timeout
-          const paymentDetails = await Promise.race([
-            getPaymentDetails(paymentId),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout ao buscar pagamento')), 8000)
-            )
-          ]);
+          // Buscar detalhes do pagamento na API do Mercado Pago
+          const paymentDetails = await getPaymentDetails(paymentId);
           
           if (paymentDetails) {
             console.log('📊 Detalhes do pagamento:', {
@@ -156,8 +147,7 @@ app.post('/webhook', async (req, res) => {
               payment_method: paymentDetails.payment_method_id,
               payer_email: paymentDetails.payer?.email,
               payer_name: paymentDetails.payer?.first_name,
-              live_mode: req.body.live_mode,
-              processing_time: `${Date.now() - startTime}ms`
+              live_mode: req.body.live_mode
             });
             
             if (paymentDetails.status === 'approved') {
@@ -168,8 +158,7 @@ app.post('/webhook', async (req, res) => {
                 id: paymentId,
                 amount: paymentDetails.transaction_amount,
                 payer: paymentDetails.payer?.first_name || 'Anônimo',
-                new_total: coffeeData.totalAmount,
-                processing_time: `${Date.now() - startTime}ms`
+                new_total: coffeeData.totalAmount
               });
             } else {
               console.log(`⏳ Pagamento ainda não aprovado. Status: ${paymentDetails.status}`);
@@ -177,25 +166,18 @@ app.post('/webhook', async (req, res) => {
           } else {
             console.log('❌ Não foi possível buscar detalhes do pagamento');
           }
-        } catch (asyncError) {
-          console.error('💥 ERRO NO PROCESSAMENTO ASSÍNCRONO:', asyncError.message);
+        } catch (paymentError) {
+          console.error('💥 ERRO AO BUSCAR DETALHES DO PAGAMENTO:', paymentError.message);
         }
-      });
-    } else {
-      console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}, Body:`, req.body);
+      } else {
+        console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}`);
+        console.log('📄 Body completo:', JSON.stringify(req.body, null, 2));
+      }
+      
+    } catch (error) {
+      console.error('💥 ERRO NO PROCESSAMENTO DO WEBHOOK:', error.message);
     }
-    
-  } catch (error) {
-    console.error('💥 ERRO AO PROCESSAR WEBHOOK:', error);
-    // Se ainda não enviou resposta, enviar erro
-    if (!res.headersSent) {
-      res.status(200).json({ 
-        success: false,
-        error: 'Erro processado',
-        timestamp: new Date().toISOString()
-      });
-    }
-  }
+  });
 });
 
 // Endpoint para o ESP32 consultar dados da cafeteira

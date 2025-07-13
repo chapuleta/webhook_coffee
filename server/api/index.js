@@ -132,7 +132,8 @@ app.post('/generate-qr', async (req, res) => {
       {
         headers: {
           'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `coffee-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
         }
       }
     );
@@ -196,7 +197,8 @@ app.post('/generate-qr-fixed', async (req, res) => {
       {
         headers: {
           'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `coffee-fixed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
         }
       }
     );
@@ -249,7 +251,8 @@ app.get('/qr-page', async (req, res) => {
       {
         headers: {
           'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `coffee-web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
         }
       }
     );

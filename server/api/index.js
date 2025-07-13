@@ -4,14 +4,35 @@ const axios = require('axios');
 
 const app = express();
 
-// Middleware para parsing JSON
-app.use(express.json());
+// Middleware para parsing JSON com limite maior para webhooks
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Middleware para logs de requisições
+app.use((req, res, next) => {
+  console.log(`📡 ${req.method} ${req.path} - ${new Date().toISOString()}`);
+  next();
+});
 
 // Middleware para CORS (necessário para requests do ESP32)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  
+  // Responder OPTIONS requests rapidamente
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+
+// Middleware para adicionar headers de segurança
+app.use((req, res, next) => {
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
   next();
 });
 
@@ -31,18 +52,60 @@ let coffeeData = {
 
 // Endpoint de teste
 app.get('/', (req, res) => {
-  res.json({
+  const healthcheck = {
+    status: 'OK',
     message: 'Servidor Ponte Cafeteira IoT funcionando!',
-    status: 'online',
-    timestamp: new Date().toISOString()
-  });
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: {
+      node_version: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      memory_usage: process.memoryUsage()
+    },
+    mercado_pago: {
+      token_configured: !!MP_ACCESS_TOKEN,
+      token_length: MP_ACCESS_TOKEN ? MP_ACCESS_TOKEN.length : 0
+    },
+    coffee_data: {
+      total_amount: coffeeData.totalAmount,
+      transaction_count: coffeeData.transactionCount,
+      last_donation_date: coffeeData.lastDonation.date
+    },
+    endpoints: [
+      'GET / (healthcheck)',
+      'POST /webhook (receber notificações MP)',
+      'GET /coffee-status (status da cafeteira)',
+      'POST /reset (resetar dados)',
+      'POST /generate-qr (QR Code editável)',
+      'POST /generate-qr-fixed (QR Code valor fixo)',
+      'GET /qr-page (página web com QR)',
+      'GET /test-mp-connection (testar conectividade)',
+      'POST /simulate-webhook (simular webhook)'
+    ]
+  };
+  
+  res.json(healthcheck);
 });
 
 // Endpoint para receber webhooks do Mercado Pago
 app.post('/webhook', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
+    // Sempre responder rapidamente primeiro para evitar timeout
+    res.status(200).json({ 
+      success: true,
+      message: 'Webhook recebido',
+      timestamp: new Date().toISOString()
+    });
+
     console.log('🔔 WEBHOOK RECEBIDO:', {
-      headers: req.headers,
+      headers: {
+        'content-type': req.headers['content-type'],
+        'user-agent': req.headers['user-agent'],
+        'x-signature': req.headers['x-signature']
+      },
       body: req.body,
       timestamp: new Date().toISOString()
     });
@@ -55,7 +118,7 @@ app.post('/webhook', async (req, res) => {
     if (req.body.action && req.body.data && req.body.data.id) {
       action = req.body.action;
       paymentId = req.body.data.id;
-      console.log('📋 Formato novo de webhook detectado');
+      console.log('📋 Formato novo de webhook detectado (API v1)');
     }
     // Formato antigo: { action, data }
     else if (req.body.action && req.body.data) {
@@ -70,53 +133,68 @@ app.post('/webhook', async (req, res) => {
       console.log('📋 Formato direto de webhook detectado');
     }
     
-    // Verificar se é uma notificação de pagamento
+    // Verificar se é uma notificação de pagamento válida
     if ((action === 'payment.created' || action === 'payment.updated') && paymentId) {
       console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
       
-      // Buscar detalhes do pagamento na API do Mercado Pago
-      const paymentDetails = await getPaymentDetails(paymentId);
-      
-      if (paymentDetails) {
-        console.log('📊 Detalhes do pagamento:', {
-          id: paymentId,
-          status: paymentDetails.status,
-          amount: paymentDetails.transaction_amount,
-          payment_method: paymentDetails.payment_method_id,
-          payer_email: paymentDetails.payer?.email,
-          payer_name: paymentDetails.payer?.first_name,
-          live_mode: req.body.live_mode
-        });
-        
-        if (paymentDetails.status === 'approved') {
-          // Atualizar dados da cafeteira
-          updateCoffeeData(paymentDetails);
+      // Processar de forma assíncrona para não bloquear a resposta
+      setImmediate(async () => {
+        try {
+          // Buscar detalhes do pagamento na API do Mercado Pago com timeout
+          const paymentDetails = await Promise.race([
+            getPaymentDetails(paymentId),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout ao buscar pagamento')), 8000)
+            )
+          ]);
           
-          console.log('✅ PAGAMENTO APROVADO E PROCESSADO:', {
-            id: paymentId,
-            amount: paymentDetails.transaction_amount,
-            payer: paymentDetails.payer?.first_name || 'Anônimo',
-            new_total: coffeeData.totalAmount
-          });
-        } else {
-          console.log(`⏳ Pagamento ainda não aprovado. Status: ${paymentDetails.status}`);
+          if (paymentDetails) {
+            console.log('📊 Detalhes do pagamento:', {
+              id: paymentId,
+              status: paymentDetails.status,
+              amount: paymentDetails.transaction_amount,
+              payment_method: paymentDetails.payment_method_id,
+              payer_email: paymentDetails.payer?.email,
+              payer_name: paymentDetails.payer?.first_name,
+              live_mode: req.body.live_mode,
+              processing_time: `${Date.now() - startTime}ms`
+            });
+            
+            if (paymentDetails.status === 'approved') {
+              // Atualizar dados da cafeteira
+              updateCoffeeData(paymentDetails);
+              
+              console.log('✅ PAGAMENTO APROVADO E PROCESSADO:', {
+                id: paymentId,
+                amount: paymentDetails.transaction_amount,
+                payer: paymentDetails.payer?.first_name || 'Anônimo',
+                new_total: coffeeData.totalAmount,
+                processing_time: `${Date.now() - startTime}ms`
+              });
+            } else {
+              console.log(`⏳ Pagamento ainda não aprovado. Status: ${paymentDetails.status}`);
+            }
+          } else {
+            console.log('❌ Não foi possível buscar detalhes do pagamento');
+          }
+        } catch (asyncError) {
+          console.error('💥 ERRO NO PROCESSAMENTO ASSÍNCRONO:', asyncError.message);
         }
-      } else {
-        console.log('❌ Não foi possível buscar detalhes do pagamento');
-      }
+      });
     } else {
-      console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}`);
+      console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}, Body:`, req.body);
     }
     
-    res.status(200).json({ 
-      message: 'Webhook processado com sucesso',
-      received_at: new Date().toISOString(),
-      action: action,
-      payment_id: paymentId
-    });
   } catch (error) {
     console.error('💥 ERRO AO PROCESSAR WEBHOOK:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    // Se ainda não enviou resposta, enviar erro
+    if (!res.headersSent) {
+      res.status(200).json({ 
+        success: false,
+        error: 'Erro processado',
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 });
 
@@ -574,18 +652,33 @@ app.post('/simulate-webhook', async (req, res) => {
 // Função para buscar detalhes do pagamento na API do Mercado Pago
 async function getPaymentDetails(paymentId) {
   try {
+    console.log(`🔍 Buscando detalhes do pagamento ${paymentId}...`);
+    
     const response = await axios.get(
       `https://api.mercadopago.com/v1/payments/${paymentId}`,
       {
         headers: {
-          'Authorization': `Bearer ${MP_ACCESS_TOKEN}`
-        }
+          'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000 // 5 segundos de timeout
       }
     );
     
+    console.log(`✅ Detalhes do pagamento ${paymentId} obtidos com sucesso`);
     return response.data;
   } catch (error) {
-    console.error('Erro ao buscar detalhes do pagamento:', error.response?.data || error.message);
+    if (error.code === 'ECONNABORTED') {
+      console.error(`⏰ Timeout ao buscar pagamento ${paymentId}`);
+    } else if (error.response) {
+      console.error(`❌ Erro HTTP ao buscar pagamento ${paymentId}:`, {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data
+      });
+    } else {
+      console.error(`💥 Erro de rede ao buscar pagamento ${paymentId}:`, error.message);
+    }
     return null;
   }
 }

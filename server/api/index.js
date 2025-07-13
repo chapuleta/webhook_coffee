@@ -8,9 +8,11 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Middleware para logs de requisições
+// Middleware para logs de requisições (EXCETO webhook)
 app.use((req, res, next) => {
-  console.log(`📡 ${req.method} ${req.path} - ${new Date().toISOString()}`);
+  if (req.path !== '/webhook') {
+    console.log(`📡 ${req.method} ${req.path} - ${new Date().toISOString()}`);
+  }
   next();
 });
 
@@ -88,41 +90,16 @@ app.get('/', (req, res) => {
   res.json(healthcheck);
 });
 
-// Endpoint para receber webhooks do Mercado Pago
+// Endpoint para receber webhooks do Mercado Pago - ULTRA OTIMIZADO
 app.post('/webhook', (req, res) => {
-  // RESPOSTA MAIS RÁPIDA POSSÍVEL
-  res.writeHead(200, {'Content-Type': 'text/plain'});
+  // RESPOSTA MAIS RÁPIDA POSSÍVEL - sem headers extras
+  res.writeHead(200);
   res.end('OK');
-  
-  // Log mínimo necessário
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] Webhook recebido`);
-  
-  // Processar de forma totalmente isolada
-  setImmediate(() => {
-    try {
-      const body = req.body || {};
-      
-      // Extrair payment ID
-      let paymentId = null;
-      if (body.data && body.data.id) {
-        paymentId = body.data.id;
-      } else if (body.id) {
-        paymentId = body.id;
-      }
-      
-      if (paymentId && (body.action === 'payment.updated' || body.action === 'payment.created')) {
-        console.log(`[${timestamp}] Processando: ${paymentId}`);
-        
-        // Processar pagamento de forma assíncrona
-        processPayment(paymentId, timestamp);
-      } else {
-        console.log(`[${timestamp}] Webhook ignorado:`, JSON.stringify(body));
-      }
-    } catch (error) {
-      console.error(`[${timestamp}] Erro:`, error.message);
-    }
-  });
+});
+
+// Endpoint ULTRA MINIMALISTA para webhook (apenas resposta)
+app.post('/webhook-minimal', (req, res) => {
+  res.end('OK');
 });
 
 // Função separada para processar pagamento
@@ -670,6 +647,38 @@ app.use('*', (req, res) => {
 app.use((error, req, res, next) => {
   console.error('Erro não tratado:', error);
   res.status(500).json({ error: 'Erro interno do servidor' });
+});
+
+// Endpoint separado para logging de webhooks (para debug)
+app.post('/webhook-debug', (req, res) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] Webhook DEBUG recebido:`, {
+    headers: req.headers,
+    body: req.body
+  });
+  
+  // Processar de forma assíncrona
+  setImmediate(() => {
+    try {
+      const body = req.body || {};
+      let paymentId = null;
+      
+      if (body.data && body.data.id) {
+        paymentId = body.data.id;
+      } else if (body.id) {
+        paymentId = body.id;
+      }
+      
+      if (paymentId && (body.action === 'payment.updated' || body.action === 'payment.created')) {
+        console.log(`[${timestamp}] Processando: ${paymentId}`);
+        processPayment(paymentId, timestamp);
+      }
+    } catch (error) {
+      console.error(`[${timestamp}] Erro:`, error.message);
+    }
+  });
+  
+  res.status(200).send('OK');
 });
 
 // Exportar o app para a Vercel (não usar app.listen)

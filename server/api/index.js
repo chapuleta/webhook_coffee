@@ -47,11 +47,31 @@ app.post('/webhook', async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-    const { action, data } = req.body;
+    // Suporte para diferentes formatos de webhook do Mercado Pago
+    let paymentId = null;
+    let action = null;
+    
+    // Formato novo (v1): { action, api_version, data: { id }, date_created, id, live_mode, type, user_id }
+    if (req.body.action && req.body.data && req.body.data.id) {
+      action = req.body.action;
+      paymentId = req.body.data.id;
+      console.log('📋 Formato novo de webhook detectado');
+    }
+    // Formato antigo: { action, data }
+    else if (req.body.action && req.body.data) {
+      action = req.body.action;
+      paymentId = req.body.data;
+      console.log('📋 Formato antigo de webhook detectado');
+    }
+    // Formato direto: { id, type }
+    else if (req.body.id && req.body.type === 'payment') {
+      action = 'payment.updated';
+      paymentId = req.body.id;
+      console.log('📋 Formato direto de webhook detectado');
+    }
     
     // Verificar se é uma notificação de pagamento
-    if (action === 'payment.created' || action === 'payment.updated') {
-      const paymentId = data.id;
+    if ((action === 'payment.created' || action === 'payment.updated') && paymentId) {
       console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
       
       // Buscar detalhes do pagamento na API do Mercado Pago
@@ -64,7 +84,8 @@ app.post('/webhook', async (req, res) => {
           amount: paymentDetails.transaction_amount,
           payment_method: paymentDetails.payment_method_id,
           payer_email: paymentDetails.payer?.email,
-          payer_name: paymentDetails.payer?.first_name
+          payer_name: paymentDetails.payer?.first_name,
+          live_mode: req.body.live_mode
         });
         
         if (paymentDetails.status === 'approved') {
@@ -84,12 +105,14 @@ app.post('/webhook', async (req, res) => {
         console.log('❌ Não foi possível buscar detalhes do pagamento');
       }
     } else {
-      console.log(`ℹ️ Webhook ignorado. Action: ${action}`);
+      console.log(`ℹ️ Webhook ignorado. Action: ${action}, PaymentId: ${paymentId}`);
     }
     
     res.status(200).json({ 
       message: 'Webhook processado com sucesso',
-      received_at: new Date().toISOString()
+      received_at: new Date().toISOString(),
+      action: action,
+      payment_id: paymentId
     });
   } catch (error) {
     console.error('💥 ERRO AO PROCESSAR WEBHOOK:', error);

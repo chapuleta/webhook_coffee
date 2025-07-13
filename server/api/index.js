@@ -41,32 +41,58 @@ app.get('/', (req, res) => {
 // Endpoint para receber webhooks do Mercado Pago
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('Webhook recebido:', req.body);
+    console.log('🔔 WEBHOOK RECEBIDO:', {
+      headers: req.headers,
+      body: req.body,
+      timestamp: new Date().toISOString()
+    });
     
     const { action, data } = req.body;
     
     // Verificar se é uma notificação de pagamento
     if (action === 'payment.created' || action === 'payment.updated') {
       const paymentId = data.id;
+      console.log(`💰 Processando ${action} para pagamento ID: ${paymentId}`);
       
       // Buscar detalhes do pagamento na API do Mercado Pago
       const paymentDetails = await getPaymentDetails(paymentId);
       
-      if (paymentDetails && paymentDetails.status === 'approved') {
-        // Atualizar dados da cafeteira
-        updateCoffeeData(paymentDetails);
-        
-        console.log('Pagamento aprovado:', {
+      if (paymentDetails) {
+        console.log('📊 Detalhes do pagamento:', {
           id: paymentId,
+          status: paymentDetails.status,
           amount: paymentDetails.transaction_amount,
-          payer: paymentDetails.payer.first_name
+          payment_method: paymentDetails.payment_method_id,
+          payer_email: paymentDetails.payer?.email,
+          payer_name: paymentDetails.payer?.first_name
         });
+        
+        if (paymentDetails.status === 'approved') {
+          // Atualizar dados da cafeteira
+          updateCoffeeData(paymentDetails);
+          
+          console.log('✅ PAGAMENTO APROVADO E PROCESSADO:', {
+            id: paymentId,
+            amount: paymentDetails.transaction_amount,
+            payer: paymentDetails.payer?.first_name || 'Anônimo',
+            new_total: coffeeData.totalAmount
+          });
+        } else {
+          console.log(`⏳ Pagamento ainda não aprovado. Status: ${paymentDetails.status}`);
+        }
+      } else {
+        console.log('❌ Não foi possível buscar detalhes do pagamento');
       }
+    } else {
+      console.log(`ℹ️ Webhook ignorado. Action: ${action}`);
     }
     
-    res.status(200).json({ message: 'Webhook processado com sucesso' });
+    res.status(200).json({ 
+      message: 'Webhook processado com sucesso',
+      received_at: new Date().toISOString()
+    });
   } catch (error) {
-    console.error('Erro ao processar webhook:', error);
+    console.error('💥 ERRO AO PROCESSAR WEBHOOK:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
@@ -104,7 +130,7 @@ app.get('/coffee-status', (req, res) => {
   }
 });
 
-// Endpoint para reset dos dados (útil para testes)
+// Endpoint para resetar dados da cafeteira
 app.post('/reset', (req, res) => {
   coffeeData = {
     totalAmount: 0,
@@ -393,6 +419,132 @@ app.get('/qr-page', async (req, res) => {
       error: 'Erro ao gerar página QR',
       details: error.response?.data || error.message
     });
+  }
+});
+
+// Endpoint para testar conectividade com Mercado Pago
+app.get('/test-mp-connection', async (req, res) => {
+  try {
+    const response = await axios.get('https://api.mercadopago.com/v1/payment_methods', {
+      headers: {
+        'Authorization': `Bearer ${MP_ACCESS_TOKEN}`
+      }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Conectividade com Mercado Pago OK',
+      methods_count: response.data.length
+    });
+  } catch (error) {
+    console.error('Erro ao testar conectividade MP:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Erro ao conectar com Mercado Pago',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Endpoint para verificar configuração do webhook
+app.get('/webhook-config', async (req, res) => {
+  try {
+    // Tentar buscar as configurações atuais de webhook
+    const response = await axios.get('https://api.mercadopago.com/v1/account/settings', {
+      headers: {
+        'Authorization': `Bearer ${MP_ACCESS_TOKEN}`
+      }
+    });
+    
+    res.json({
+      success: true,
+      webhook_url: `${req.protocol}://${req.get('host')}/webhook`,
+      current_settings: response.data
+    });
+  } catch (error) {
+    console.error('Erro ao verificar config webhook:', error.response?.data || error.message);
+    res.json({
+      success: false,
+      webhook_url: `${req.protocol}://${req.get('host')}/webhook`,
+      error: 'Não foi possível verificar configurações',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Endpoint para configurar webhook automaticamente
+app.post('/setup-webhook', async (req, res) => {
+  try {
+    const webhookUrl = req.body.url || `${req.protocol}://${req.get('host')}/webhook`;
+    
+    // Tentar configurar o webhook na conta do Mercado Pago
+    const response = await axios.post('https://api.mercadopago.com/v1/webhooks', {
+      url: webhookUrl,
+      events: ['payment']
+    }, {
+      headers: {
+        'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Webhook configurado com sucesso',
+      webhook_id: response.data.id,
+      webhook_url: webhookUrl
+    });
+  } catch (error) {
+    console.error('Erro ao configurar webhook:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Erro ao configurar webhook',
+      details: error.response?.data || error.message,
+      webhook_url: req.body.url || `${req.protocol}://${req.get('host')}/webhook`
+    });
+  }
+});
+
+// Endpoint para simular webhook (para testes)
+app.post('/simulate-webhook', async (req, res) => {
+  try {
+    const { paymentId } = req.body;
+    
+    if (!paymentId) {
+      return res.status(400).json({ error: 'paymentId é obrigatório' });
+    }
+    
+    // Buscar detalhes do pagamento
+    const paymentDetails = await getPaymentDetails(paymentId);
+    
+    if (!paymentDetails) {
+      return res.status(404).json({ error: 'Pagamento não encontrado' });
+    }
+    
+    // Simular webhook
+    const webhookBody = {
+      action: 'payment.updated',
+      data: { id: paymentId }
+    };
+    
+    console.log('🔄 Simulando webhook:', webhookBody);
+    
+    // Processar como se fosse um webhook real
+    if (paymentDetails.status === 'approved') {
+      updateCoffeeData(paymentDetails);
+      console.log('✅ Webhook simulado processado com sucesso');
+    }
+    
+    res.json({
+      success: true,
+      message: 'Webhook simulado com sucesso',
+      payment: paymentDetails,
+      webhook_data: webhookBody
+    });
+    
+  } catch (error) {
+    console.error('Erro ao simular webhook:', error);
+    res.status(500).json({ error: 'Erro ao simular webhook' });
   }
 });
 

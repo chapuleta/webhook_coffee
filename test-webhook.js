@@ -5,26 +5,7 @@
 
 const axios = require('axios');
 
-// Configurar a URL b    console.log('Comandos     console.log('Exemplos:');
-    console.log('  node test-webhook.js health');
-    console.log('  node test-webhook.js generate-qr');
-    console.log('  node test-webhook.js generate-qr-fixed 10.00');
-    console.log('  node test-webhook.js open-qr-page');
-    console.log('  node test-webhook.js test-payment 0.01');
-    console.log('  node test-webhook.js simulate 123456789');
-    console.log('  node test-webhook.js full-test');
-    console.log('  health              - Verificar se servidor está funcionando');
-    console.log('  test-mp             - Testar conectividade com Mercado Pago');
-    console.log('  webhook-config      - Verificar configuração do webhook');
-    console.log('  setup-webhook       - Configurar webhook automaticamente');
-    console.log('  test-payment [valor] - Criar pagamento de teste (padrão: R$ 1,00)');
-    console.log('  generate-qr         - Gerar QR Code PIX (valor editável)');
-    console.log('  generate-qr-fixed [valor] - Gerar QR Code PIX com valor fixo');
-    console.log('  open-qr-page        - Mostrar URL da página com QR Code');
-    console.log('  simulate [id]       - Simular webhook para pagamento específico');
-    console.log('  coffee-status       - Verificar status da cafeteira');
-    console.log('  reset               - Resetar dados da cafeteira');
-    console.log('  full-test           - Executar teste completo'); servidor
+// Configurar a URL base do seu servidor
 const BASE_URL = 'https://webhook-coffee.vercel.app'; // Substitua pela sua URL do Vercel
 
 const commands = {
@@ -87,43 +68,6 @@ const commands = {
     }
   },
 
-  'simulate': async (paymentId) => {
-    if (!paymentId) {
-      console.error('❌ É necessário fornecer um ID de pagamento');
-      return;
-    }
-    
-    console.log(`🔄 Simulando webhook para pagamento ${paymentId}...`);
-    try {
-      const response = await axios.post(`${BASE_URL}/simulate-webhook`, {
-        paymentId: paymentId
-      });
-      console.log('✅ Webhook simulado:', response.data);
-    } catch (error) {
-      console.error('❌ Erro:', error.response?.data || error.message);
-    }
-  },
-
-  'coffee-status': async () => {
-    console.log('☕ Verificando status da cafeteira...');
-    try {
-      const response = await axios.get(`${BASE_URL}/coffee-status`);
-      console.log('✅ Status:', response.data);
-    } catch (error) {
-      console.error('❌ Erro:', error.response?.data || error.message);
-    }
-  },
-
-  'reset': async () => {
-    console.log('🔄 Resetando dados da cafeteira...');
-    try {
-      const response = await axios.post(`${BASE_URL}/reset`);
-      console.log('✅ Dados resetados:', response.data);
-    } catch (error) {
-      console.error('❌ Erro:', error.response?.data || error.message);
-    }
-  },
-
   'generate-qr': async () => {
     console.log('📱 Gerando QR Code PIX (valor editável)...');
     try {
@@ -162,6 +106,43 @@ const commands = {
     console.log('🌐 Abrindo página com QR Code...');
     console.log(`📱 Acesse: ${BASE_URL}/qr-page`);
     console.log('💡 Esta página permite que o usuário digite o valor da doação!');
+  },
+
+  'simulate': async (paymentId) => {
+    if (!paymentId) {
+      console.error('❌ É necessário fornecer um ID de pagamento');
+      return;
+    }
+    
+    console.log(`🔄 Simulando webhook para pagamento ${paymentId}...`);
+    try {
+      const response = await axios.post(`${BASE_URL}/simulate-webhook`, {
+        paymentId: paymentId
+      });
+      console.log('✅ Webhook simulado:', response.data);
+    } catch (error) {
+      console.error('❌ Erro:', error.response?.data || error.message);
+    }
+  },
+
+  'coffee-status': async () => {
+    console.log('☕ Verificando status da cafeteira...');
+    try {
+      const response = await axios.get(`${BASE_URL}/coffee-status`);
+      console.log('✅ Status:', response.data);
+    } catch (error) {
+      console.error('❌ Erro:', error.response?.data || error.message);
+    }
+  },
+
+  'reset': async () => {
+    console.log('🔄 Resetando dados da cafeteira...');
+    try {
+      const response = await axios.post(`${BASE_URL}/reset`);
+      console.log('✅ Dados resetados:', response.data);
+    } catch (error) {
+      console.error('❌ Erro:', error.response?.data || error.message);
+    }
   },
 
   'full-test': async () => {
@@ -204,21 +185,21 @@ async function main() {
     console.log('  webhook-config      - Verificar configuração do webhook');
     console.log('  setup-webhook       - Configurar webhook automaticamente');
     console.log('  test-payment [valor] - Criar pagamento de teste (padrão: R$ 1,00)');
+    console.log('  generate-qr         - Gerar QR Code PIX (valor editável)');
+    console.log('  generate-qr-fixed [valor] - Gerar QR Code PIX com valor fixo');
+    console.log('  open-qr-page        - Mostrar URL da página com QR Code');
     console.log('  simulate [id]       - Simular webhook para pagamento específico');
     console.log('  coffee-status       - Verificar status da cafeteira');
     console.log('  reset               - Resetar dados da cafeteira');
-    console.log('  generate-qr         - Gerar QR Code PIX (valor editável)');
-    console.log('  generate-qr-fixed   - Gerar QR Code PIX fixo (valor padrão: R$ 5,00)');
-    console.log('  open-qr-page        - Abrir página com QR Code');
     console.log('  full-test           - Executar teste completo');
     console.log('');
     console.log('Exemplos:');
     console.log('  node test-webhook.js health');
-    console.log('  node test-webhook.js test-payment 0.01');
-    console.log('  node test-webhook.js simulate 123456789');
     console.log('  node test-webhook.js generate-qr');
     console.log('  node test-webhook.js generate-qr-fixed 10.00');
     console.log('  node test-webhook.js open-qr-page');
+    console.log('  node test-webhook.js test-payment 0.01');
+    console.log('  node test-webhook.js simulate 123456789');
     console.log('  node test-webhook.js full-test');
     return;
   }

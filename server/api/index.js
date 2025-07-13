@@ -85,7 +85,18 @@ app.get('/coffee-status', (req, res) => {
       lastUpdate: new Date().toISOString()
     };
     
-    console.log('Status consultado pelo ESP32:', response);
+    // Identificar origem da consulta
+    const userAgent = req.get('User-Agent') || 'unknown';
+    const origin = req.get('Referer') || 'unknown';
+    
+    if (userAgent.includes('ESP32') || userAgent.includes('Arduino')) {
+      console.log('📱 Status consultado pelo ESP32:', response);
+    } else if (origin.includes('/qr-page') || userAgent.includes('Mozilla')) {
+      console.log('🌐 Status consultado pela página web (auto-refresh):', response);
+    } else {
+      console.log('❓ Status consultado por origem desconhecida:', { userAgent, origin, response });
+    }
+    
     res.json(response);
   } catch (error) {
     console.error('Erro ao consultar status:', error);
@@ -114,13 +125,13 @@ app.post('/generate-qr', async (req, res) => {
   try {
     const { description = 'Doação para Cafeteira IoT', externalReference = null } = req.body;
     
-    // Criar um pagamento PIX sem valor fixo (valor será inserido pelo usuário)
+    // Criar um pagamento PIX com valor mínimo (usuário pode editar no app do banco)
     const paymentData = {
       description: description,
       external_reference: externalReference || `coffee-${Date.now()}`,
       notification_url: `${req.protocol}://${req.get('host')}/webhook`,
       payment_method_id: 'pix',
-      transaction_amount: 0.01, // Valor mínimo, será sobrescrito pelo usuário
+      transaction_amount: 0.01, // Valor mínimo obrigatório - usuário pode editar no app do banco
       payer: {
         email: 'cafe@exemplo.com'
       }
@@ -347,7 +358,7 @@ app.get('/qr-page', async (req, res) => {
             <div class="instructions">
                 <h3>📱 Como doar:</h3>
                 <p>1. Escaneie o QR Code com seu app do banco</p>
-                <p>2. <strong>Digite o valor que desejar</strong></p>
+                <p>2. <strong>🔥 EDITE O VALOR para qualquer quantia que desejar</strong></p>
                 <p>3. Confirme o pagamento PIX</p>
                 <p>4. Sua doação aparecerá no display em tempo real!</p>
             </div>
@@ -364,7 +375,10 @@ app.get('/qr-page', async (req, res) => {
             </div>
             
             <div class="instructions">
-                <small>💡 O valor é editável! Você pode doar qualquer quantia a partir de R$ 0,01</small>
+                <h4>🎯 IMPORTANTE: O VALOR É TOTALMENTE EDITÁVEL!</h4>
+                <p>✅ Pode doar R$ 1,00, R$ 5,00, R$ 10,00 ou qualquer valor</p>
+                <p>✅ Basta alterar no app do seu banco antes de confirmar</p>
+                <p>✅ Mínimo: R$ 0,01 • Máximo: sem limite</p>
             </div>
         </div>
     </body>

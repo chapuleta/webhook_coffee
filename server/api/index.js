@@ -52,10 +52,6 @@ let coffeeData = {
   transactionCount: 0
 };
 
-// Variável para armazenar QR Code atual
-let currentQRCode = null;
-let qrCodeExpiry = null;
-
 // Endpoint de teste
 app.get('/', (req, res) => {
   const healthcheck = {
@@ -295,54 +291,31 @@ app.post('/generate-qr-fixed', async (req, res) => {
 // Endpoint para criar uma página web com QR Code
 app.get('/qr-page', async (req, res) => {
   try {
-    let payment = null;
-    const now = new Date();
-    const forceNew = req.query.new === 'true';
-    
-    // Verificar se temos um QR Code válido (não expirado) e não foi forçado novo
-    if (currentQRCode && qrCodeExpiry && now < qrCodeExpiry && !forceNew) {
-      console.log('🔄 Reutilizando QR Code existente');
-      payment = currentQRCode;
-    } else {
-      if (forceNew) {
-        console.log('🔥 Forçando geração de novo QR Code');
-      } else {
-        console.log('🆕 Gerando novo QR Code (expirado)');
+    // Gerar um QR Code para valor editável
+    const paymentData = {
+      description: 'Doação para Cafeteira IoT ☕',
+      external_reference: `coffee-web-${Date.now()}`,
+      notification_url: `${req.protocol}://${req.get('host')}/webhook`,
+      payment_method_id: 'pix',
+      transaction_amount: 0.01, // Valor mínimo
+      payer: {
+        email: 'cafe@exemplo.com'
       }
-      
-      // Gerar um novo QR Code
-      const paymentData = {
-        description: 'Doação para Cafeteira IoT ☕',
-        external_reference: `coffee-web-${Date.now()}`,
-        notification_url: `${req.protocol}://${req.get('host')}/webhook`,
-        payment_method_id: 'pix',
-        transaction_amount: 0.01, // Valor mínimo
-        payer: {
-          email: 'cafe@exemplo.com'
+    };
+
+    const response = await axios.post(
+      'https://api.mercadopago.com/v1/payments',
+      paymentData,
+      {
+        headers: {
+          'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': `coffee-web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
         }
-      };
+      }
+    );
 
-      const response = await axios.post(
-        'https://api.mercadopago.com/v1/payments',
-        paymentData,
-        {
-          headers: {
-            'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json',
-            'X-Idempotency-Key': `coffee-web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          }
-        }
-      );
-
-      payment = response.data;
-      
-      // Armazenar QR Code com expiração de 10 minutos
-      currentQRCode = payment;
-      qrCodeExpiry = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutos
-      
-      console.log(`💾 QR Code armazenado até: ${qrCodeExpiry.toISOString()}`);
-    }
-
+    const payment = response.data;
     const qrCodeBase64 = payment.point_of_interaction?.transaction_data?.qr_code_base64;
     
     // Página HTML com QR Code
@@ -394,24 +367,7 @@ app.get('/qr-page', async (req, res) => {
                 background: rgba(0,255,0,0.2);
                 border-radius: 10px;
             }
-            .qr-info {
-                background: rgba(255,255,0,0.2);
-                padding: 10px;
-                border-radius: 8px;
-                margin: 10px 0;
-                font-size: 0.9em;
-            }
             .coffee-icon { font-size: 3em; margin: 10px 0; }
-            .refresh-btn {
-                background: #FFD700;
-                color: #6F4E37;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                cursor: pointer;
-                font-weight: bold;
-                margin: 10px;
-            }
         </style>
         <script>
             // Verificar status do pagamento a cada 5 segundos
@@ -435,10 +391,6 @@ app.get('/qr-page', async (req, res) => {
                     .catch(error => console.error('Erro:', error));
             }
             
-            function refreshQRCode() {
-                window.location.href = '/qr-page?new=true';
-            }
-            
             window.onload = function() {
                 checkPaymentStatus();
                 startChecking();
@@ -449,12 +401,6 @@ app.get('/qr-page', async (req, res) => {
         <div class="container">
             <div class="coffee-icon">☕</div>
             <h1>Doação para Cafeteira IoT</h1>
-            
-            <div class="qr-info">
-                <strong>📋 ID do Pagamento:</strong> ${payment.id}<br>
-                <strong>⏰ QR Code válido até:</strong> ${qrCodeExpiry ? qrCodeExpiry.toLocaleString('pt-BR') : 'N/A'}<br>
-                <strong>💰 Valor base:</strong> R$ ${payment.transaction_amount.toFixed(2)} (editável)
-            </div>
             
             <div class="instructions">
                 <h3>📱 Como doar:</h3>
@@ -468,8 +414,6 @@ app.get('/qr-page', async (req, res) => {
                 ${qrCodeBase64 ? `<img src="data:image/png;base64,${qrCodeBase64}" alt="QR Code PIX">` : '<p>Erro ao gerar QR Code</p>'}
             </div>
             
-            <button class="refresh-btn" onclick="refreshQRCode()">🔄 Gerar Novo QR Code</button>
-            
             <div class="status">
                 <h3>📊 Status da Cafeteira</h3>
                 <p><strong>Total arrecadado:</strong> <span id="total">R$ 0,00</span></p>
@@ -482,7 +426,6 @@ app.get('/qr-page', async (req, res) => {
                 <p>✅ Pode doar R$ 1,00, R$ 5,00, R$ 10,00 ou qualquer valor</p>
                 <p>✅ Basta alterar no app do seu banco antes de confirmar</p>
                 <p>✅ Mínimo: R$ 0,01 • Máximo: sem limite</p>
-                <p>🔄 QR Code é reutilizado por 10 minutos para evitar spam</p>
             </div>
         </div>
     </body>
@@ -736,17 +679,6 @@ app.post('/webhook-debug', (req, res) => {
   });
   
   res.status(200).send('OK');
-});
-
-// Endpoint para limpar QR Code atual (para testes)
-app.post('/clear-qr', (req, res) => {
-  currentQRCode = null;
-  qrCodeExpiry = null;
-  console.log('🗑️ QR Code atual limpo');
-  res.json({ 
-    message: 'QR Code limpo com sucesso',
-    timestamp: new Date().toISOString()
-  });
 });
 
 // Exportar o app para a Vercel (não usar app.listen)
